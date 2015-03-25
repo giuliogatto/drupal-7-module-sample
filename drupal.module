@@ -328,3 +328,4 @@ function custom_module_menu_alter(&$items) {
 
 }
 
+?>
