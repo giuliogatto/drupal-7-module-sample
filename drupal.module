@@ -1,0 +1,330 @@
+<?php
+
+/**
+* Implements hook_block_info().
+* Initialize the custom blocks with their names
+*/
+
+function custom_module_block_info() {
+
+  $blocks = array();
+
+  $blocks['insertdoctorcode'] = array(
+
+    'info' => t('Insert a doctor code'),
+
+  );
+  
+  $blocks['nextinjectiondate'] = array(
+
+    'info' => t('Find date of next injection'),
+
+  );
+  
+  $blocks['nextmonth'] = array(
+
+    'info' => t('Find date of next monthly check up'),
+
+  );
+  
+  $blocks['next3month'] = array(
+
+    'info' => t('Find date of next quarterly check up'),
+
+  );
+
+  $blocks['nextams'] = array(
+
+    'info' => t('Find date of next AMS'),
+
+  );
+
+  return $blocks;
+
+}
+
+/**
+* Implements hook_block_view().
+* Create the views for the blocks (and bind some functions)
+*/
+
+function custom_module_block_view($delta = '') {
+
+  $block = array();
+
+  switch ($delta) {
+
+    case 'insertdoctorcode':
+
+     	  $block['subject'] = '';
+
+      	$block['content'] = drupal_render(drupal_get_form('custom_module_form'));
+
+      	break;
+
+    case 'nextinjectiondate':
+
+      	$block['subject'] = '';
+
+      	$block['content'] = nextinjection();
+
+      	break;
+
+    case 'nextmonth':
+
+      	$block['subject'] = '';
+
+      	$block['content'] = nextcheckup();
+
+      	break;
+
+    case 'next3month':
+
+      	$block['subject'] = '';
+
+      	$block['content'] = nextquarterly();
+
+      	break;
+
+    case 'nextams':
+
+      	$block['subject'] = '';
+
+      	$block['content'] = nextams();
+
+      	break;
+
+  }
+
+  return $block;
+}
+
+
+
+/**
+ * Create a custom form so the patient can insert a doctor code
+ */
+
+
+function custom_module_form($form, &$form_state) {
+
+   $form['doctorcode'] = array(
+
+    	'#type' => 'textfield',
+
+    	'#required' => TRUE,
+
+    	'#title' => t("Insert a new code for a doctor"),
+
+    	'#description' => t('Must be a valid code'),
+
+  );
+ 
+	$form['submit'] = array(
+
+    	'#type' => 'submit',
+
+    	'#value' => t('Insert'),
+
+  );
+ 
+	return $form;
+
+}
+
+/**
+ * Create form submit logic to check if the code is valid and to save a new code associated with the user
+ */
+
+function custom_module_form_submit($form, &$form_state) {
+
+	global $user;
+
+	$code = $form_state['values']['doctorcode'];
+
+	// check if the code is valid
+
+  $id_doctors = db_query("SELECT entity_id FROM {field_data_field_doctor_code} n WHERE field_doctor_code_value='".$code."'"); 
+
+  if($id_doctors->rowCount()==0){
+
+        // code is not valid!
+
+    		drupal_set_message("Code is not valid");
+
+	}else{
+
+		 	// check if the code is already attached to user in table `field_data_field_validation` 
+		 	global $user;
+
+    	$codepresent = db_query("SELECT entity_id FROM {field_data_field_validation} n WHERE field_validation_value='".$code."' AND entity_id='".$user->uid."'"); 
+
+			if($codepresent->rowCount()>0){
+
+    			drupal_set_message("Code is already associated with you");
+
+    		}else{
+    		
+    			// find the delta of a previous code (if present)
+    			$delta = db_query("SELECT MAX(delta) FROM {field_data_field_validation} n WHERE entity_id='".$user->uid."'")->fetchField(); 
+
+    			if($delta){
+
+    				$delta++;
+
+    			}else{
+
+    				$delta=1;
+    			}
+    			
+    		
+          // load the user object
+
+      		$existingUser = user_load($user->uid);
+
+          // insert a new validation field for the user
+  				
+  				$existingUser->field_validation['und'][$delta]['value'] = $code;
+
+  				// save existing user (update) with new validation
+
+  				user_save((object) array('uid' => $existingUser->uid), (array) $existingUser);
+      			
+			
+			}
+
+	}
+
+    
+}
+
+
+
+
+
+/**
+ * hook form alter (redirects after form submission and some validation logic)
+ */
+
+
+function custom_module_form_alter(&$form, &$form_state, $form_id) {
+
+	 // remove the preview button from all forms
+
+	 unset($form['actions']['preview']);
+
+	 if ($form_id == 'timelineevents_node_form') {
+
+    	 $form['#action'] .= '?destination=timeline';
+
+  	}
+  	if ($form_id == 'ams_form_node_form') {
+
+    	 $form['#action'] .= '?destination=medical-follow-up/health';
+
+  	}
+  	
+  	if ($form_id == '3month_form_node_form') {
+
+    	 $form['#action'] .= '?destination=medical-follow-up/psa';
+
+  	}
+  	
+  	if ($form_id == 'month_form_node_form') {
+
+    	 $form['#action'] .= '?destination=medical-follow-up/physiological';
+
+  	}
+  	
+  	// add an extra validation for the validation code 
+
+  	if ($form_id == 'user_register_form') {
+
+		  $form['#validate'][] = 'custom_module_user_register_form_validate';
+	 
+   } 
+	
+	
+}
+
+/**
+* Additional handler for user_register_form form validation.
+*/
+
+function custom_module_user_register_form_validate($form, &$form_state) {
+	
+	 $result = db_query("SELECT * FROM {field_data_field_doctor_code} n WHERE field_doctor_code_value='".$form_state['values']['field_validation']['und']['0']['value']."'");
+
+	 $codicevalido=0;
+
+   // loop through all of the valid codes and seeks a match
+
+	 foreach($result as $item) {
+
+  		$codicevalido=1;
+
+	 }
+	
+	 // check if code is valid, if not then set a form error
+
+	 if(!$codicevalido)form_set_error('Validation code error', t('Your validation code is wrong: ').$form_state['values']['field_validation']['und']['0']['value']);
+
+} 
+
+
+// FUNCTION TO CHECK IF THE USER LOGGED IN IS A PATIENT
+
+function user_is_patient() {  
+
+	global $user;
+
+    if (in_array('patient', $user->roles)){
+
+      return TRUE;
+
+    }
+
+  return FALSE; 
+}
+
+
+
+// FUNCTION TO REDIRECT USER IMMEDIATLY AFTER LOGIN AND SET A MESSAGE TO BE SHOWN AFTER PATIENT LOGIN
+
+function custom_module_user_login(&$edit, $account)
+{
+  
+  unset($_GET['destination']);
+
+  global $user;
+
+	if (in_array('patient', $user->roles)){
+
+	  drupal_set_message("Is there a new event your physiciant should know about? Received a new treatment? Do not forget to update your records");
+
+      $_GET['destination']="dashboard";
+
+    }
+
+    if (in_array('doctor', $user->roles)){
+
+      $_GET['destination']="patients-of-a-doctor";
+
+    }
+  
+	
+  
+}
+
+// REMOVE TABS FROM REGISTER PAGE
+
+function custom_module_menu_alter(&$items) {
+
+  $items['user']['type'] = MENU_CALLBACK;
+
+  $items['user/register']['type'] = MENU_CALLBACK;
+
+  $items['user/password']['type'] = MENU_CALLBACK;
+
+}
+
